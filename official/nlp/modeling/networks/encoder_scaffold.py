@@ -21,7 +21,6 @@ from absl import logging
 import gin
 import tensorflow as tf
 
-from official.nlp import keras_nlp
 from official.nlp.modeling import layers
 
 
@@ -74,9 +73,12 @@ class EncoderScaffold(tf.keras.Model):
       standard pretraining.
     num_hidden_instances: The number of times to instantiate and/or invoke the
       hidden_cls.
-    hidden_cls: The class or instance to encode the input data. If `hidden_cls`
-      is not set, a KerasBERT transformer layer will be used as the encoder
-      class.
+    hidden_cls: Three types of input are supported: (1) class (2) instance
+      (3) list of classes or instances, to encode the input data. If
+      `hidden_cls` is not set, a KerasBERT transformer layer will be used as the
+      encoder class. If `hidden_cls` is a list of classes or instances, these
+      classes (instances) are sequentially instantiated (invoked) on top of
+      embedding layer. Mixing classes and instances in the list is allowed.
     hidden_cfg: A dict of kwargs to pass to the hidden_cls, if it needs to be
       instantiated. If hidden_cls is not set, a config dict must be passed to
       `hidden_cfg` with the following values:
@@ -112,7 +114,7 @@ class EncoderScaffold(tf.keras.Model):
                num_hidden_instances=1,
                hidden_cls=layers.Transformer,
                hidden_cfg=None,
-               mask_cls=keras_nlp.layers.SelfAttentionMask,
+               mask_cls=layers.SelfAttentionMask,
                mask_cfg=None,
                layer_norm_before_pooling=False,
                return_all_layer_outputs=False,
@@ -143,7 +145,7 @@ class EncoderScaffold(tf.keras.Model):
           shape=(seq_length,), dtype=tf.int32, name='input_type_ids')
       inputs = [word_ids, mask, type_ids]
 
-      embedding_layer = keras_nlp.layers.OnDeviceEmbedding(
+      embedding_layer = layers.OnDeviceEmbedding(
           vocab_size=embedding_cfg['vocab_size'],
           embedding_width=embedding_cfg['hidden_size'],
           initializer=embedding_cfg['initializer'],
@@ -152,13 +154,13 @@ class EncoderScaffold(tf.keras.Model):
       word_embeddings = embedding_layer(word_ids)
 
       # Always uses dynamic slicing for simplicity.
-      position_embedding_layer = keras_nlp.layers.PositionEmbedding(
+      position_embedding_layer = layers.PositionEmbedding(
           initializer=embedding_cfg['initializer'],
           max_length=embedding_cfg['max_seq_length'],
           name='position_embedding')
       position_embeddings = position_embedding_layer(word_embeddings)
 
-      type_embedding_layer = keras_nlp.layers.OnDeviceEmbedding(
+      type_embedding_layer = layers.OnDeviceEmbedding(
           vocab_size=embedding_cfg['type_vocab_size'],
           embedding_width=embedding_cfg['hidden_size'],
           initializer=embedding_cfg['initializer'],
@@ -192,15 +194,26 @@ class EncoderScaffold(tf.keras.Model):
     layer_output_data = []
     hidden_layers = []
     hidden_cfg = hidden_cfg if hidden_cfg else {}
+
+    if isinstance(hidden_cls, list) and len(hidden_cls) != num_hidden_instances:
+      raise RuntimeError(
+          ('When input hidden_cls to EncoderScaffold %s is a list, it must '
+           'contain classes or instances with size specified by '
+           'num_hidden_instances, got %d vs %d.') % self.name, len(hidden_cls),
+          num_hidden_instances)
     for i in range(num_hidden_instances):
-      if inspect.isclass(hidden_cls):
+      if isinstance(hidden_cls, list):
+        cur_hidden_cls = hidden_cls[i]
+      else:
+        cur_hidden_cls = hidden_cls
+      if inspect.isclass(cur_hidden_cls):
         if hidden_cfg and 'attention_cfg' in hidden_cfg and (
             layer_idx_as_attention_seed):
           hidden_cfg = copy.deepcopy(hidden_cfg)
           hidden_cfg['attention_cfg']['seed'] = i
-        layer = hidden_cls(**hidden_cfg)
+        layer = cur_hidden_cls(**hidden_cfg)
       else:
-        layer = hidden_cls
+        layer = cur_hidden_cls
       data = layer([data, attention_mask])
       layer_output_data.append(data)
       hidden_layers.append(layer)
@@ -346,6 +359,15 @@ class EncoderScaffold(tf.keras.Model):
                           'serialization is not yet supported.') % self.name)
     else:
       return self._embedding_data
+
+  @property
+  def embedding_network(self):
+    if self._embedding_network is None:
+      raise RuntimeError(
+          ('The EncoderScaffold %s does not have a reference '
+           'to the embedding network. This is required when you '
+           'pass a custom embedding network to the scaffold.') % self.name)
+    return self._embedding_network
 
   @property
   def hidden_layers(self):

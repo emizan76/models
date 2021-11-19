@@ -23,8 +23,8 @@ from absl import flags
 import tensorflow as tf
 
 from official.benchmark import owner_utils
-from official.vision.image_classification.resnet import common
-from official.vision.image_classification.resnet import resnet_ctl_imagenet_main
+from official.legacy.image_classification.resnet import common
+from official.legacy.image_classification.resnet import resnet_ctl_imagenet_main
 from official.benchmark.perfzero_benchmark import PerfZeroBenchmark
 from official.benchmark import benchmark_wrappers
 from official.utils.flags import core as flags_core
@@ -163,19 +163,6 @@ class Resnet50CtlAccuracy(CtlBenchmark):
     FLAGS.dtype = 'fp16'
     self._run_and_report_benchmark()
 
-  def benchmark_8_gpu_amp(self):
-    """Test Keras model with 8 GPUs and mixed precision via graph rewrite."""
-    self._setup()
-    FLAGS.num_gpus = 8
-    FLAGS.data_dir = self.data_dir
-    FLAGS.batch_size = 256 * 8
-    FLAGS.train_epochs = 90
-    FLAGS.epochs_between_evals = 10
-    FLAGS.model_dir = self._get_model_dir('benchmark_8_gpu_amp')
-    FLAGS.dtype = 'fp16'
-    FLAGS.fp16_implementation = 'graph_rewrite'
-    self._run_and_report_benchmark()
-
   @benchmark_wrappers.enable_runtime_flags
   def _run_and_report_benchmark(self):
     start_time_sec = time.time()
@@ -259,31 +246,6 @@ class Resnet50CtlBenchmarkBase(CtlBenchmark):
     FLAGS.model_dir = self._get_model_dir('benchmark_1_gpu_fp16')
     FLAGS.batch_size = 256
     FLAGS.dtype = 'fp16'
-    self._run_and_report_benchmark()
-
-  def benchmark_1_gpu_amp(self):
-    """Test Keras model with 1 GPU with automatic mixed precision."""
-    self._setup()
-
-    FLAGS.num_gpus = 1
-    FLAGS.distribution_strategy = 'one_device'
-    FLAGS.model_dir = self._get_model_dir('benchmark_1_gpu_amp')
-    FLAGS.batch_size = 256
-    FLAGS.dtype = 'fp16'
-    FLAGS.fp16_implementation = 'graph_rewrite'
-    self._run_and_report_benchmark()
-
-  def benchmark_xla_1_gpu_amp(self):
-    """Test Keras model with XLA and 1 GPU with automatic mixed precision."""
-    self._setup()
-
-    FLAGS.num_gpus = 1
-    FLAGS.distribution_strategy = 'one_device'
-    FLAGS.model_dir = self._get_model_dir('benchmark_xla_1_gpu_amp')
-    FLAGS.batch_size = 256
-    FLAGS.dtype = 'fp16'
-    FLAGS.fp16_implementation = 'graph_rewrite'
-    FLAGS.enable_xla = True
     self._run_and_report_benchmark()
 
   def benchmark_1_gpu_eager(self):
@@ -381,31 +343,6 @@ class Resnet50CtlBenchmarkBase(CtlBenchmark):
     FLAGS.batch_size = 128
     self._run_and_report_benchmark()
 
-  def benchmark_8_gpu_amp(self):
-    """Test Keras model with 8 GPUs with automatic mixed precision."""
-    self._setup()
-
-    FLAGS.num_gpus = 8
-    FLAGS.distribution_strategy = 'mirrored'
-    FLAGS.model_dir = self._get_model_dir('benchmark_8_gpu_amp')
-    FLAGS.batch_size = 256 * 8  # 8 GPUs
-    FLAGS.dtype = 'fp16'
-    FLAGS.fp16_implementation = 'graph_rewrite'
-    self._run_and_report_benchmark()
-
-  def benchmark_xla_8_gpu_amp(self):
-    """Test Keras model with XLA and 8 GPUs with automatic mixed precision."""
-    self._setup()
-
-    FLAGS.num_gpus = 8
-    FLAGS.distribution_strategy = 'mirrored'
-    FLAGS.model_dir = self._get_model_dir('benchmark_xla_8_gpu_amp')
-    FLAGS.batch_size = 256 * 8  # 8 GPUs
-    FLAGS.dtype = 'fp16'
-    FLAGS.fp16_implementation = 'graph_rewrite'
-    FLAGS.enable_xla = True
-    self._run_and_report_benchmark()
-
   def _set_df_common(self):
     FLAGS.steps_per_loop = 500
     FLAGS.train_epochs = 2
@@ -419,7 +356,7 @@ class Resnet50CtlBenchmarkBase(CtlBenchmark):
     FLAGS.single_l2_loss_op = True
     FLAGS.use_tf_function = True
     FLAGS.enable_checkpoint_and_export = False
-    FLAGS.data_dir = 'gs://mlcompass-data/imagenet/imagenet-2012-tfrecord'
+    FLAGS.data_dir = '/readahead/400M/placer/prod/home/distbelief/imagenet-tensorflow/imagenet-2012-tfrecord'
 
   def benchmark_2x2_tpu_bf16(self):
     self._setup()
@@ -442,9 +379,15 @@ class Resnet50CtlBenchmarkBase(CtlBenchmark):
   def benchmark_4x4_tpu_bf16(self):
     self._setup()
     self._set_df_common()
-    FLAGS.batch_size = 4096
+    FLAGS.batch_size = 8192
+    FLAGS.train_epochs = 4
     FLAGS.dtype = 'bf16'
     FLAGS.model_dir = self._get_model_dir('benchmark_4x4_tpu_bf16')
+    # Use dataset local to running cell (me). Also use ssd because this has
+    # given the max performance for ML Perf runs.
+    # TODO(emizan) See performance when placer has data on me cell and
+    # update copybara again
+    FLAGS.data_dir = 'gs://mlcompass-data/imagenet/imagenet-2012-tfrecord'
     self._run_and_report_benchmark()
 
   @owner_utils.Owner('tf-graph-compiler')

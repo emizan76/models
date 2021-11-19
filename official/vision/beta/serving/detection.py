@@ -15,6 +15,7 @@
 # Lint as: python3
 """Detection input and model functions for serving/inference."""
 
+from typing import Mapping, Text
 import tensorflow as tf
 
 from official.vision.beta import configs
@@ -36,8 +37,6 @@ class DetectionModule(export_base.ExportModule):
 
     if self._batch_size is None:
       raise ValueError('batch_size cannot be None for detection models.')
-    if not self.params.task.model.detection_generator.use_batched_nms:
-      raise ValueError('Only batched_nms is supported.')
     input_specs = tf.keras.layers.InputSpec(shape=[self._batch_size] +
                                             self._input_image_size + [3])
 
@@ -80,13 +79,17 @@ class DetectionModule(export_base.ExportModule):
 
     return image, anchor_boxes, image_info
 
-  def serve(self, images: tf.Tensor):
-    """Cast image to float and run inference.
+  def preprocess(self, images: tf.Tensor) -> (
+      tf.Tensor, Mapping[Text, tf.Tensor], tf.Tensor):
+    """Preprocess inputs to be suitable for the model.
 
     Args:
-      images: uint8 Tensor of shape [batch_size, None, None, 3]
+      images: The images tensor.
     Returns:
-      Tensor holding detection output logits.
+      images: The images tensor cast to float.
+      anchor_boxes: Dict mapping anchor levels to anchor boxes.
+      image_info: Tensor containing the details of the image resizing.
+
     """
     model_params = self.params.task.model
     with tf.device('cpu:0'):
@@ -119,6 +122,18 @@ class DetectionModule(export_base.ExportModule):
                                    image_info_spec),
               parallel_iterations=32))
 
+      return images, anchor_boxes, image_info
+
+  def serve(self, images: tf.Tensor):
+    """Cast image to float and run inference.
+
+    Args:
+      images: uint8 Tensor of shape [batch_size, None, None, 3]
+    Returns:
+      Tensor holding detection output logits.
+    """
+
+    images, anchor_boxes, image_info = self.preprocess(images)
     input_image_shape = image_info[:, 1, :]
 
     # To overcome keras.Model extra limitation to save a model with layers that

@@ -69,9 +69,11 @@ class ResidualBlock(tf.keras.layers.Layer):
                kernel_regularizer=None,
                bias_regularizer=None,
                activation='relu',
+               use_explicit_padding: bool = False,
                use_sync_bn=False,
                norm_momentum=0.99,
                norm_epsilon=0.001,
+               bn_trainable=True,
                **kwargs):
     """Initializes a residual block with BN after convolutions.
 
@@ -96,9 +98,14 @@ class ResidualBlock(tf.keras.layers.Layer):
       bias_regularizer: A `tf.keras.regularizers.Regularizer` object for Conv2d.
         Default to None.
       activation: A `str` name of the activation function.
+      use_explicit_padding: Use 'VALID' padding for convolutions, but prepad
+        inputs so that the output dimensions are the same as if 'SAME' padding
+        were used.
       use_sync_bn: A `bool`. If True, use synchronized batch normalization.
       norm_momentum: A `float` of normalization momentum for the moving average.
       norm_epsilon: A `float` added to variance to avoid dividing by zero.
+      bn_trainable: A `bool` that indicates whether batch norm layers should be
+        trainable. Default to True.
       **kwargs: Additional keyword arguments to be passed.
     """
     super(ResidualBlock, self).__init__(**kwargs)
@@ -108,6 +115,7 @@ class ResidualBlock(tf.keras.layers.Layer):
     self._use_projection = use_projection
     self._se_ratio = se_ratio
     self._resnetd_shortcut = resnetd_shortcut
+    self._use_explicit_padding = use_explicit_padding
     self._use_sync_bn = use_sync_bn
     self._activation = activation
     self._stochastic_depth_drop_rate = stochastic_depth_drop_rate
@@ -126,6 +134,7 @@ class ResidualBlock(tf.keras.layers.Layer):
     else:
       self._bn_axis = 1
     self._activation_fn = tf_utils.get_activation(activation)
+    self._bn_trainable = bn_trainable
 
   def build(self, input_shape):
     if self._use_projection:
@@ -140,13 +149,20 @@ class ResidualBlock(tf.keras.layers.Layer):
       self._norm0 = self._norm(
           axis=self._bn_axis,
           momentum=self._norm_momentum,
-          epsilon=self._norm_epsilon)
+          epsilon=self._norm_epsilon,
+          trainable=self._bn_trainable)
+
+    conv1_padding = 'same'
+    # explicit padding here is added for centernet
+    if self._use_explicit_padding:
+      self._pad = tf.keras.layers.ZeroPadding2D(padding=(1, 1))
+      conv1_padding = 'valid'
 
     self._conv1 = tf.keras.layers.Conv2D(
         filters=self._filters,
         kernel_size=3,
         strides=self._strides,
-        padding='same',
+        padding=conv1_padding,
         use_bias=False,
         kernel_initializer=self._kernel_initializer,
         kernel_regularizer=self._kernel_regularizer,
@@ -154,7 +170,8 @@ class ResidualBlock(tf.keras.layers.Layer):
     self._norm1 = self._norm(
         axis=self._bn_axis,
         momentum=self._norm_momentum,
-        epsilon=self._norm_epsilon)
+        epsilon=self._norm_epsilon,
+        trainable=self._bn_trainable)
 
     self._conv2 = tf.keras.layers.Conv2D(
         filters=self._filters,
@@ -168,7 +185,8 @@ class ResidualBlock(tf.keras.layers.Layer):
     self._norm2 = self._norm(
         axis=self._bn_axis,
         momentum=self._norm_momentum,
-        epsilon=self._norm_epsilon)
+        epsilon=self._norm_epsilon,
+        trainable=self._bn_trainable)
 
     if self._se_ratio and self._se_ratio > 0 and self._se_ratio <= 1:
       self._squeeze_excitation = nn_layers.SqueezeExcitation(
@@ -201,9 +219,11 @@ class ResidualBlock(tf.keras.layers.Layer):
         'kernel_regularizer': self._kernel_regularizer,
         'bias_regularizer': self._bias_regularizer,
         'activation': self._activation,
+        'use_explicit_padding': self._use_explicit_padding,
         'use_sync_bn': self._use_sync_bn,
         'norm_momentum': self._norm_momentum,
-        'norm_epsilon': self._norm_epsilon
+        'norm_epsilon': self._norm_epsilon,
+        'bn_trainable': self._bn_trainable
     }
     base_config = super(ResidualBlock, self).get_config()
     return dict(list(base_config.items()) + list(config.items()))
@@ -214,6 +234,8 @@ class ResidualBlock(tf.keras.layers.Layer):
       shortcut = self._shortcut(shortcut)
       shortcut = self._norm0(shortcut)
 
+    if self._use_explicit_padding:
+      inputs = self._pad(inputs)
     x = self._conv1(inputs)
     x = self._norm1(x)
     x = self._activation_fn(x)
@@ -249,6 +271,7 @@ class BottleneckBlock(tf.keras.layers.Layer):
                use_sync_bn=False,
                norm_momentum=0.99,
                norm_epsilon=0.001,
+               bn_trainable=True,
                **kwargs):
     """Initializes a standard bottleneck block with BN after convolutions.
 
@@ -277,6 +300,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
       use_sync_bn: A `bool`. If True, use synchronized batch normalization.
       norm_momentum: A `float` of normalization momentum for the moving average.
       norm_epsilon: A `float` added to variance to avoid dividing by zero.
+      bn_trainable: A `bool` that indicates whether batch norm layers should be
+        trainable. Default to True.
       **kwargs: Additional keyword arguments to be passed.
     """
     super(BottleneckBlock, self).__init__(**kwargs)
@@ -303,6 +328,7 @@ class BottleneckBlock(tf.keras.layers.Layer):
       self._bn_axis = -1
     else:
       self._bn_axis = 1
+    self._bn_trainable = bn_trainable
 
   def build(self, input_shape):
     if self._use_projection:
@@ -330,7 +356,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
       self._norm0 = self._norm(
           axis=self._bn_axis,
           momentum=self._norm_momentum,
-          epsilon=self._norm_epsilon)
+          epsilon=self._norm_epsilon,
+          trainable=self._bn_trainable)
 
     self._conv1 = tf.keras.layers.Conv2D(
         filters=self._filters,
@@ -343,7 +370,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
     self._norm1 = self._norm(
         axis=self._bn_axis,
         momentum=self._norm_momentum,
-        epsilon=self._norm_epsilon)
+        epsilon=self._norm_epsilon,
+        trainable=self._bn_trainable)
     self._activation1 = tf_utils.get_activation(
         self._activation, use_keras_layer=True)
 
@@ -360,7 +388,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
     self._norm2 = self._norm(
         axis=self._bn_axis,
         momentum=self._norm_momentum,
-        epsilon=self._norm_epsilon)
+        epsilon=self._norm_epsilon,
+        trainable=self._bn_trainable)
     self._activation2 = tf_utils.get_activation(
         self._activation, use_keras_layer=True)
 
@@ -375,7 +404,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
     self._norm3 = self._norm(
         axis=self._bn_axis,
         momentum=self._norm_momentum,
-        epsilon=self._norm_epsilon)
+        epsilon=self._norm_epsilon,
+        trainable=self._bn_trainable)
     self._activation3 = tf_utils.get_activation(
         self._activation, use_keras_layer=True)
 
@@ -414,7 +444,8 @@ class BottleneckBlock(tf.keras.layers.Layer):
         'activation': self._activation,
         'use_sync_bn': self._use_sync_bn,
         'norm_momentum': self._norm_momentum,
-        'norm_epsilon': self._norm_epsilon
+        'norm_epsilon': self._norm_epsilon,
+        'bn_trainable': self._bn_trainable
     }
     base_config = super(BottleneckBlock, self).get_config()
     return dict(list(base_config.items()) + list(config.items()))
@@ -478,6 +509,7 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
                use_residual=True,
                norm_momentum=0.99,
                norm_epsilon=0.001,
+               output_intermediate_endpoints=False,
                **kwargs):
     """Initializes an inverted bottleneck block with BN after convolutions.
 
@@ -520,6 +552,8 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
         input and output.
       norm_momentum: A `float` of normalization momentum for the moving average.
       norm_epsilon: A `float` added to variance to avoid dividing by zero.
+      output_intermediate_endpoints: A `bool` of whether or not output the
+        intermediate endpoints.
       **kwargs: Additional keyword arguments to be passed.
     """
     super(InvertedBottleneckBlock, self).__init__(**kwargs)
@@ -547,6 +581,7 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
     self._kernel_regularizer = kernel_regularizer
     self._bias_regularizer = bias_regularizer
     self._expand_se_in_filters = expand_se_in_filters
+    self._output_intermediate_endpoints = output_intermediate_endpoints
 
     if use_sync_bn:
       self._norm = tf.keras.layers.experimental.SyncBatchNormalization
@@ -681,6 +716,7 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
     return dict(list(base_config.items()) + list(config.items()))
 
   def call(self, inputs, training=None):
+    endpoints = {}
     shortcut = inputs
     if self._expand_ratio > 1:
       x = self._conv0(inputs)
@@ -693,6 +729,8 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
       x = self._conv1(x)
       x = self._norm1(x)
       x = self._depthwise_activation_layer(x)
+      if self._output_intermediate_endpoints:
+        endpoints['depthwise'] = x
 
     if self._squeeze_excitation:
       x = self._squeeze_excitation(x)
@@ -707,6 +745,8 @@ class InvertedBottleneckBlock(tf.keras.layers.Layer):
         x = self._stochastic_depth(x, training=training)
       x = self._add([x, shortcut])
 
+    if self._output_intermediate_endpoints:
+      return x, endpoints
     return x
 
 

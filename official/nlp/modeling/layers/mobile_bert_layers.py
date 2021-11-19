@@ -15,7 +15,8 @@
 """MobileBERT embedding and transformer layers."""
 import tensorflow as tf
 
-from official.nlp import keras_nlp
+from official.nlp.modeling.layers import on_device_embedding
+from official.nlp.modeling.layers import position_embedding
 
 
 @tf.keras.utils.register_keras_serializable(package='Text')
@@ -39,23 +40,6 @@ class NoNorm(tf.keras.layers.Layer):
     return output
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class NoNormClipped(NoNorm):
-  """Quantization friendly implementation for the NoNorm.
-
-  The output of NoNorm layer is clipped to [-6.0, 6.0] to make it quantization
-  friendly.
-  """
-
-  def __init__(self, name=None):
-    super(NoNormClipped, self).__init__(name=name)
-
-  def call(self, feature):
-    output = feature * self.scale + self.bias
-    clipped_output = tf.clip_by_value(output, -6.0, 6.0)
-    return clipped_output
-
-
 def _get_norm_layer(normalization_type='no_norm', name=None):
   """Get normlization layer.
 
@@ -69,8 +53,6 @@ def _get_norm_layer(normalization_type='no_norm', name=None):
   """
   if normalization_type == 'no_norm':
     layer = NoNorm(name=name)
-  elif normalization_type == 'no_norm_clipped':
-    layer = NoNormClipped(name=name)
   elif normalization_type == 'layer_norm':
     layer = tf.keras.layers.LayerNormalization(
         name=name,
@@ -124,17 +106,17 @@ class MobileBertEmbedding(tf.keras.layers.Layer):
     self.initializer = tf.keras.initializers.get(initializer)
     self.dropout_rate = dropout_rate
 
-    self.word_embedding = keras_nlp.layers.OnDeviceEmbedding(
+    self.word_embedding = on_device_embedding.OnDeviceEmbedding(
         self.word_vocab_size,
         self.word_embed_size,
         initializer=initializer,
         name='word_embedding')
-    self.type_embedding = keras_nlp.layers.OnDeviceEmbedding(
+    self.type_embedding = on_device_embedding.OnDeviceEmbedding(
         self.type_vocab_size,
         self.output_embed_size,
         initializer=initializer,
         name='type_embedding')
-    self.pos_embedding = keras_nlp.layers.PositionEmbedding(
+    self.pos_embedding = position_embedding.PositionEmbedding(
         max_length=max_sequence_length,
         initializer=initializer,
         name='position_embedding')
